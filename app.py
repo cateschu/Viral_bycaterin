@@ -1,83 +1,114 @@
 import streamlit as st
 import pandas as pd
+import requests
 from pytrends.request import TrendReq
-import time
 
-# 1. CONFIGURACIÓN PROFESIONAL
-st.set_page_config(page_title="By Caterina - Winner Hunter", layout="wide", page_icon="🛍️")
+st.set_page_config(layout="wide")
+st.title("🚀 By Caterina Store - Trend Hunter PRO ARG 🇦🇷")
 
-st.title("🛍️ By Caterina Store: Buscador de Productos Revendibles")
-st.markdown("---")
-
-# 2. SELECTOR DE PAÍS (Donde nacen las modas)
-paises = {
-    "Argentina (Tendencia Local)": "argentina",
-    "Estados Unidos (Tendencia Global)": "united_states", 
-    "Brasil (Mercado Similar)": "brazil", 
-    "España": "spain"
-}
-
-seleccion = st.selectbox("🌍 Elegí el mercado a investigar:", list(paises.keys()))
-
-# 3. LÓGICA DE FILTRADO PARA REVENTA
-def es_producto_revendible(nombre):
-    # Lista de palabras que indican que NO es un producto físico para tu tienda
-    no_deseado = [
-        "facebook", "instagram", "google", "clima", "tiempo", "dolar", 
-        "cotizacion", "partido", "en vivo", "noticias", "diario", "anses",
-        "vuelos", "entradas", "cine", "resultado", "pronostico"
-    ]
-    return not any(palabra in nombre.lower() for palabra in no_deseado)
-
-# 4. FUNCIÓN DE TENDENCIAS MEJORADA
-@st.cache_data(ttl=600)
-def obtener_ganadores(nombre_pais):
+# -----------------------------------
+# TENDENCIAS
+# -----------------------------------
+@st.cache_data(ttl=604800)
+def get_trends():
+    pytrends = TrendReq(hl='es-ES', tz=360)
+    
+    trends = []
+    
     try:
-        pytrends = TrendReq(hl='es-AR', tz=180, retries=2)
-        df = pytrends.trending_searches(pn=nombre_pais)
-        df.columns = ["Termino"]
-        
-        # Filtramos para quedarnos solo con lo que parece un producto
-        productos_filtrados = df[df['Termino'].apply(es_producto_revendible)]
-        return productos_filtrados
-    except Exception:
-        # PLAN B: Productos con alta rotación en proveedores de Argentina actualmente
-        ganadores_latam = [
-            "Mini Proyector LED Portátil", "Humidificador de aire Gota", 
-            "Auriculares F9-5 Bluetooth", "Reloj Smartwatch T500/T800", 
-            "Lámpara de Puesta de Sol (Sunset)", "Licuadora Portátil Recargable",
-            "Balanza Digital de Cocina", "Masajeador Cervical Eléctrico",
-            "Aspiradora de Auto Inalámbrica", "Set de Bandas Elásticas"
-        ]
-        return pd.DataFrame(ganadores_latam, columns=["Termino"])
+        df = pytrends.trending_searches(pn="argentina")
+        trends = df[0].tolist()
+    except:
+        pass
+    
+    return list(set(trends))
 
-# 5. PANEL DE CONTROL
-if st.button("🚀 Buscar Oportunidades de Reventa"):
-    with st.spinner("Analizando proveedores e interés de búsqueda..."):
-        time.sleep(1.5)
+# -----------------------------------
+# MERCADOLIBRE DATA
+# -----------------------------------
+def search_mercadolibre(product):
+    
+    url = f"https://api.mercadolibre.com/sites/MLA/search?q={product}"
+    
+    try:
+        response = requests.get(url)
+        data = response.json()
         
-        df_final = obtener_ganadores(paises[seleccion])
+        results = data.get("results", [])
         
-        if not df_final.empty:
-            st.subheader(f"📦 Productos con potencial de reventa en {seleccion}")
-            
-            # Formateamos la tabla para que sea más visual
-            df_mostrar = df_final.head(12).copy()
-            df_mostrar["Acción Sugerida"] = "🔍 Buscar en Proveedores Arg"
-            df_mostrar["Margen Est. (%)"] = "30% - 60%"
-            
-            st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
-            
-            st.success("¡Listo! Si ves un producto que se repite en Brasil y Argentina, importalo/buscalo ya.")
-            
-            # Tips de Administradora (UTN)
-            with st.expander("💡 Tips de Reventa para Caterina"):
-                st.write("""
-                * **Si el producto es viral en Brasil:** Suele llegar a Argentina en 15-30 días. Ganales de mano.
-                * **Costo de envío:** Recordá calcular el costo logístico local antes de fijar el precio en tu tienda.
-                * **Publicidad:** Los productos con 'AI Score' alto funcionan mejor con videos rápidos de TikTok.
-                """)
-        else:
-            st.error("No hay conexión. Probá en unos segundos.")
+        if len(results) == 0:
+            return "❌ No disponible", 0
+        
+        prices = [item["price"] for item in results[:5]]
+        avg_price = sum(prices) / len(prices)
+        
+        return "✅ Disponible", round(avg_price, 2)
+    
+    except:
+        return "Error", 0
 
-st.sidebar.markdown(f"**Admin:** Caterina\n\n**Tienda:** By Caterina Store")
+# -----------------------------------
+# IA DECISIÓN
+# -----------------------------------
+def analyze(product, available, price):
+    
+    score = 50
+    
+    if available == "❌ No disponible":
+        score += 20  # oportunidad
+    
+    if price > 20000:
+        score += 10  # margen alto
+    
+    keywords = ["pro", "smart", "mini", "wireless"]
+    
+    if any(k in product.lower() for k in keywords):
+        score += 10
+    
+    if score >= 80:
+        verdict = "🔥 IMPORTAR YA"
+    elif score >= 60:
+        verdict = "🟡 Buena oportunidad"
+    else:
+        verdict = "❌ No recomendable"
+    
+    return score, verdict
+
+# -----------------------------------
+# BOTÓN
+# -----------------------------------
+if st.button("🔍 Analizar mercado argentino"):
+    
+    trends = get_trends()
+    
+    results = []
+    
+    for t in trends:
+        
+        availability, price = search_mercadolibre(t)
+        score, verdict = analyze(t, availability, price)
+        
+        results.append({
+            "Producto": t,
+            "Disponible en AR": availability,
+            "Precio Promedio ($)": price,
+            "Score": score,
+            "Recomendación": verdict
+        })
+    
+    df = pd.DataFrame(results).sort_values(by="Score", ascending=False)
+    
+    st.subheader("📊 Análisis completo Argentina")
+    st.dataframe(df, use_container_width=True)
+    
+    st.subheader("🔥 Mejores oportunidades")
+    st.table(df.head(10))
+    
+    csv = df.to_csv(index=False).encode("utf-8")
+    
+    st.download_button(
+        "📥 Descargar CSV",
+        csv,
+        "productos_argentina.csv",
+        "text/csv"
+    )
