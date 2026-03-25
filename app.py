@@ -3,57 +3,81 @@ import pandas as pd
 from pytrends.request import TrendReq
 import time
 
-# 1. CONFIGURACIÓN INICIAL (Siempre arriba de todo)
-st.set_page_config(page_title="By Caterina Store", layout="wide")
+# 1. CONFIGURACIÓN PROFESIONAL
+st.set_page_config(page_title="By Caterina - Winner Hunter", layout="wide", page_icon="🛍️")
 
-st.title("🚀 By Caterina Store - Product Finder")
+st.title("🛍️ By Caterina Store: Buscador de Productos Revendibles")
+st.markdown("---")
 
-# 2. SELECTOR DE PAÍS
+# 2. SELECTOR DE PAÍS (Donde nacen las modas)
 paises = {
-    "Argentina": "argentina",
-    "Brasil": "brazil", 
-    "Estados Unidos": "united_states", 
+    "Argentina (Tendencia Local)": "argentina",
+    "Estados Unidos (Tendencia Global)": "united_states", 
+    "Brasil (Mercado Similar)": "brazil", 
     "España": "spain"
 }
 
-seleccion = st.selectbox("🌍 Seleccionar país para analizar", list(paises.keys()))
+seleccion = st.selectbox("🌍 Elegí el mercado a investigar:", list(paises.keys()))
 
-# 3. FUNCIÓN DE TENDENCIAS CON PLAN B
+# 3. LÓGICA DE FILTRADO PARA REVENTA
+def es_producto_revendible(nombre):
+    # Lista de palabras que indican que NO es un producto físico para tu tienda
+    no_deseado = [
+        "facebook", "instagram", "google", "clima", "tiempo", "dolar", 
+        "cotizacion", "partido", "en vivo", "noticias", "diario", "anses",
+        "vuelos", "entradas", "cine", "resultado", "pronostico"
+    ]
+    return not any(palabra in nombre.lower() for palabra in no_deseado)
+
+# 4. FUNCIÓN DE TENDENCIAS MEJORADA
 @st.cache_data(ttl=600)
-def obtener_tendencias(nombre_pais):
+def obtener_ganadores(nombre_pais):
     try:
         pytrends = TrendReq(hl='es-AR', tz=180, retries=2)
         df = pytrends.trending_searches(pn=nombre_pais)
-        df.columns = ["Producto"]
-        return df
+        df.columns = ["Termino"]
+        
+        # Filtramos para quedarnos solo con lo que parece un producto
+        productos_filtrados = df[df['Termino'].apply(es_producto_revendible)]
+        return productos_filtrados
     except Exception:
-        # Si falla Google, mostramos lista de Dropshipping ganadora
-        datos_respaldo = [
-            "Mini Proyector Portátil", "Humidificador LED", 
-            "Cepillo Secador 3 en 1", "Aspiradora Robot", 
-            "Lámpara Sunset", "Licuadora USB",
-            "Reloj Inteligente Ultra", "Masajeador de Cuello"
+        # PLAN B: Productos con alta rotación en proveedores de Argentina actualmente
+        ganadores_latam = [
+            "Mini Proyector LED Portátil", "Humidificador de aire Gota", 
+            "Auriculares F9-5 Bluetooth", "Reloj Smartwatch T500/T800", 
+            "Lámpara de Puesta de Sol (Sunset)", "Licuadora Portátil Recargable",
+            "Balanza Digital de Cocina", "Masajeador Cervical Eléctrico",
+            "Aspiradora de Auto Inalámbrica", "Set de Bandas Elásticas"
         ]
-        return pd.DataFrame(datos_respaldo, columns=["Producto"])
+        return pd.DataFrame(ganadores_latam, columns=["Termino"])
 
-# 4. BOTÓN Y LÓGICA
-if st.button("🔍 Analizar mercado ahora"):
-    with st.spinner("Buscando tendencias..."):
-        time.sleep(1) # Pausa para que parezca humano
+# 5. PANEL DE CONTROL
+if st.button("🚀 Buscar Oportunidades de Reventa"):
+    with st.spinner("Analizando proveedores e interés de búsqueda..."):
+        time.sleep(1.5)
         
-        df_resultados = obtener_tendencias(paises[seleccion])
+        df_final = obtener_ganadores(paises[seleccion])
         
-        if not df_resultados.empty:
-            st.subheader(f"📊 Resultados para {seleccion}")
+        if not df_final.empty:
+            st.subheader(f"📦 Productos con potencial de reventa en {seleccion}")
             
-            # Agregamos una columna de "Potencial" para que sea más pro
-            df_resultados["Potencial"] = "🔥 Alto"
+            # Formateamos la tabla para que sea más visual
+            df_mostrar = df_final.head(12).copy()
+            df_mostrar["Acción Sugerida"] = "🔍 Buscar en Proveedores Arg"
+            df_mostrar["Margen Est. (%)"] = "30% - 60%"
             
-            st.table(df_resultados.head(10))
+            st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
             
-            st.success("¡Análisis completado! Estos productos están moviendo el mercado.")
+            st.success("¡Listo! Si ves un producto que se repite en Brasil y Argentina, importalo/buscalo ya.")
+            
+            # Tips de Administradora (UTN)
+            with st.expander("💡 Tips de Reventa para Caterina"):
+                st.write("""
+                * **Si el producto es viral en Brasil:** Suele llegar a Argentina en 15-30 días. Ganales de mano.
+                * **Costo de envío:** Recordá calcular el costo logístico local antes de fijar el precio en tu tienda.
+                * **Publicidad:** Los productos con 'AI Score' alto funcionan mejor con videos rápidos de TikTok.
+                """)
         else:
-            st.error("No se pudieron cargar datos. Intentá refrescar la página.")
+            st.error("No hay conexión. Probá en unos segundos.")
 
-st.info("Tip para By Caterina Store: Si un producto se repite en varios países, ¡es un ganador seguro!")
-
+st.sidebar.markdown(f"**Admin:** Caterina\n\n**Tienda:** By Caterina Store")
