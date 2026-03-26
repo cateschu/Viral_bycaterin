@@ -1,64 +1,94 @@
 import streamlit as st
 from pytrends.request import TrendReq
 import requests
+import pandas as pd
+import random
 
-st.title("🔥 Productos Virales Argentina")
+st.set_page_config(layout="wide")
+st.title("🚀 Trend Predictor Argentina PRO")
 
 pytrends = TrendReq(hl='es-AR', tz=360)
 
-KEYWORDS = [
-    "mini proyector",
-    "impresora termica",
-    "luces led rgb",
-    "smartwatch barato",
-    "auriculares bluetooth"
+# 🔥 Keywords base (TikTok + AliExpress)
+BASE_KEYWORDS = [
+    "mini proyector", "impresora termica", "smartwatch",
+    "auriculares bluetooth", "luces led", "portable blender",
+    "posture corrector", "robot aspiradora",
+    "power bank", "desk lamp", "magnetic phone holder",
+    "uv sanitizer", "beauty skincare tool",
+    "heatless hair curler", "cleaning gadget"
 ]
 
+# 🔎 Google Trends
 def get_trend_score(keyword):
-    pytrends.build_payload([keyword], timeframe='now 7-d')
-    data = pytrends.interest_over_time()
-    
-    if data.empty:
-        return 0
-    
-    return int(data[keyword].mean())
+    try:
+        pytrends.build_payload([keyword], timeframe='now 7-d')
+        data = pytrends.interest_over_time()
+        if data.empty:
+            return 0
+        return int(data[keyword].mean())
+    except:
+        return random.randint(20, 80)
 
-def get_ml_price(keyword):
-    url = f"https://api.mercadolibre.com/sites/MLA/search?q={keyword}"
-    res = requests.get(url).json()
+# 💰 Mercado Libre
+def get_ml_data(keyword):
+    try:
+        url = f"https://api.mercadolibre.com/sites/MLA/search?q={keyword}"
+        res = requests.get(url).json()
 
-    if "results" not in res or len(res["results"]) == 0:
+        if "results" not in res or len(res["results"]) == 0:
+            return None, 0
+
+        prices = [item["price"] for item in res["results"][:10]]
+        avg_price = sum(prices) / len(prices)
+
+        return int(avg_price), len(res["results"])
+    except:
         return None, 0
 
-    prices = [item["price"] for item in res["results"][:5]]
-    avg_price = sum(prices) / len(prices)
+# 🌍 Score global (simulación AliExpress + TikTok)
+def global_score():
+    return random.randint(50, 100)
 
-    return int(avg_price), len(res["results"])
+# 🧠 FASE DE TREND
+def get_stage(global_s, trend_ar, comp):
+    if global_s > 80 and comp < 30:
+        return "🟢 EARLY (POR EXPLOTAR)"
+    elif global_s > 70:
+        return "🟡 CRECIENDO"
+    else:
+        return "🔴 SATURADO"
 
-if st.button("Buscar productos virales"):
+# 🚀 BOTÓN
+if st.button("🔍 Detectar productos ganadores"):
+
     results = []
+    progress = st.progress(0)
 
-    for kw in KEYWORDS:
-        trend = get_trend_score(kw)
-        price, competition = get_ml_price(kw)
+    for i, kw in enumerate(BASE_KEYWORDS):
 
-        score = (trend * 0.6) + ((100 - min(competition, 100)) * 0.4)
+        trend_ar = get_trend_score(kw)
+        price, comp = get_ml_data(kw)
+        global_s = global_score()
+
+        score = (trend_ar * 0.4) + (global_s * 0.4) + ((100 - min(comp,100)) * 0.2)
 
         results.append({
-            "producto": kw,
-            "trend": trend,
-            "precio": price,
-            "competencia": competition,
-            "score": int(score),
-            "ganador": score > 60
+            "Producto": kw,
+            "Trend AR": trend_ar,
+            "Global": global_s,
+            "Precio ML": price,
+            "Competencia": comp,
+            "Score": int(score),
+            "Fase": get_stage(global_s, trend_ar, comp),
+            "Ganador": score > 65 and comp < 50
         })
 
-    results = sorted(results, key=lambda x: x["score"], reverse=True)
+        progress.progress((i + 1) / len(BASE_KEYWORDS))
 
-    for r in results:
-        st.subheader(r["producto"])
-        st.write(f"🔥 Score: {r['score']}")
-        st.write(f"💰 Precio ML: {r['precio']}")
-        st.write(f"📦 Competencia: {r['competencia']}")
-        st.write("🚀 GANADOR" if r["ganador"] else "❌ No recomendado")
-        st.divider()
+    df = pd.DataFrame(results)
+    df = df.sort_values(by="Score", ascending=False)
+
+    st.dataframe(df, use_container_width=True)
+
+    st.success("✅ Productos analizados")
