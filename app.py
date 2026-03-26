@@ -1,12 +1,11 @@
-from fastapi import FastAPI
+import streamlit as st
 from pytrends.request import TrendReq
 import requests
 
-app = FastAPI()
+st.title("🔥 Productos Virales Argentina")
 
 pytrends = TrendReq(hl='es-AR', tz=360)
 
-# 🔎 Productos base (keywords virales típicos)
 KEYWORDS = [
     "mini proyector",
     "impresora termica",
@@ -36,8 +35,7 @@ def get_ml_price(keyword):
 
     return int(avg_price), len(res["results"])
 
-@app.get("/trends/ar")
-def trends_argentina():
+if st.button("Buscar productos virales"):
     results = []
 
     for kw in KEYWORDS:
@@ -48,11 +46,19 @@ def trends_argentina():
 
         results.append({
             "producto": kw,
-            "trend_score": trend,
-            "precio_ml": price,
+            "trend": trend,
+            "precio": price,
             "competencia": competition,
-            "viral_score_ar": int(score),
-            "ganador": score > 60 and competition < 50
+            "score": int(score),
+            "ganador": score > 60
         })
 
-    return sorted(results, key=lambda x: x["viral_score_ar"], reverse=True)
+    results = sorted(results, key=lambda x: x["score"], reverse=True)
+
+    for r in results:
+        st.subheader(r["producto"])
+        st.write(f"🔥 Score: {r['score']}")
+        st.write(f"💰 Precio ML: {r['precio']}")
+        st.write(f"📦 Competencia: {r['competencia']}")
+        st.write("🚀 GANADOR" if r["ganador"] else "❌ No recomendado")
+        st.divider()
