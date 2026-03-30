@@ -13,7 +13,7 @@ st.set_page_config(
 # =========================================================
 # TUS DATOS
 # =========================================================
-GOOGLE_API_KEY = "AIzaSyDswZxrBOdaz6jZnByoEjwOcvzU7hJ6bQw"
+GOOGLE_API_KEY = "AIzaSyBJxLHJXug1lYl3riS8dKEatYLPiY9AThA"
 GOOGLE_CX = "d48625c20c6824976"
 
 # =========================================================
