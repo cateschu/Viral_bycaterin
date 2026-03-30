@@ -1,8 +1,5 @@
-import re
-from urllib.parse import urlparse, quote
-
-import requests
 import streamlit as st
+from urllib.parse import quote_plus
 
 st.set_page_config(
     page_title="Empleos Remotos en Español",
@@ -10,61 +7,55 @@ st.set_page_config(
     layout="wide"
 )
 
-# =========================================================
-# TUS DATOS
-# =========================================================
-GOOGLE_API_KEY = "AIzaSyBJxLHJXug1lYl3riS8dKEatYLPiY9AThA"
-GOOGLE_CX = "d48625c20c6824976"
-
-# =========================================================
-# CONFIG
-# =========================================================
-DATE_RESTRICT = "d7"   # última semana
-LANGUAGE = "lang_es"
-
+# =========================
+# DATOS FIJOS
+# =========================
 COUNTRIES = {
-    "Argentina": {"gl": "ar", "terms": ["argentina", "buenos aires", "rosario", "córdoba", "cordoba", "mendoza", "santa fe"]},
-    "España": {"gl": "es", "terms": ["españa", "madrid", "barcelona", "valencia", "sevilla"]},
-    "México": {"gl": "mx", "terms": ["méxico", "mexico", "cdmx", "guadalajara", "monterrey"]},
-    "Chile": {"gl": "cl", "terms": ["chile", "santiago", "valparaíso", "valparaiso"]},
-    "Colombia": {"gl": "co", "terms": ["colombia", "bogotá", "bogota", "medellín", "medellin"]},
-    "Perú": {"gl": "pe", "terms": ["perú", "peru", "lima"]},
-    "Uruguay": {"gl": "uy", "terms": ["uruguay", "montevideo"]},
-    "Paraguay": {"gl": "py", "terms": ["paraguay", "asunción", "asuncion"]},
-    "Todos en español": {"gl": None, "terms": [
-        "argentina", "españa", "méxico", "mexico", "chile",
-        "colombia", "perú", "peru", "uruguay", "paraguay", "latam"
-    ]},
+    "Argentina": ["Argentina"],
+    "España": ["España"],
+    "México": ["México"],
+    "Chile": ["Chile"],
+    "Colombia": ["Colombia"],
+    "Perú": ["Perú"],
+    "Uruguay": ["Uruguay"],
+    "Paraguay": ["Paraguay"],
+    "Todos en español": ["Argentina", "España", "México", "Chile", "Colombia", "Perú", "Uruguay", "Paraguay"],
 }
 
-ROLES = [
-    "asistente virtual",
-    "virtual assistant",
-    "administrativo remoto",
-    "administrative assistant",
-    "data entry",
-    "customer support",
-    "chat support",
-    "email support",
-    "back office",
-    "atención al cliente remoto",
-    "soporte remoto",
-    "asistente administrativo",
-]
+ROLES = {
+    "Asistente virtual": [
+        "asistente virtual", "virtual assistant"
+    ],
+    "Administrativo": [
+        "administrativo remoto", "administrative assistant", "asistente administrativo"
+    ],
+    "Data entry": [
+        "data entry", "data entry remoto"
+    ],
+    "Soporte y atención al cliente": [
+        "customer support", "chat support", "email support", "atención al cliente remoto", "soporte remoto"
+    ],
+    "Back office": [
+        "back office", "backoffice remoto"
+    ],
+    "Todos": [
+        "asistente virtual", "virtual assistant", "administrativo remoto",
+        "administrative assistant", "asistente administrativo", "data entry",
+        "customer support", "chat support", "email support",
+        "atención al cliente remoto", "soporte remoto", "back office"
+    ]
+}
 
-FAST_APPLY = [
+FAST_TERMS = [
     "sin experiencia",
-    "no experience",
     "entry level",
     "junior",
-    "trainee",
-    "postulate",
     "postúlate",
-    "apply now",
+    "postulate",
     "easy apply",
-    "quick apply",
+    "apply now",
     "aplicación rápida",
-    "postulación rápida",
+    "postulación rápida"
 ]
 
 REMOTE_TERMS = [
@@ -72,332 +63,142 @@ REMOTE_TERMS = [
     "remote",
     "work from home",
     "home office",
-    "teletrabajo",
-    "100% remoto",
-    "fully remote",
+    "teletrabajo"
 ]
 
-EXCLUDE = [
-    "presencial",
-    "híbrido",
-    "hybrid",
-    "onsite",
-    "on site",
-    "senior",
-    "sr",
-    "manager",
-    "director",
-    "developer",
-    "engineer",
-    "programador",
-    "comercial",
-    "vendedor",
+EXCLUDE_TERMS = [
+    "-presencial",
+    "-híbrido",
+    "-hybrid",
+    "-onsite",
+    "-senior",
+    "-manager",
+    "-director",
+    "-developer",
+    "-engineer",
+    "-programador",
+    "-vendedor",
+    "-comercial"
 ]
 
-SOURCES = {
-    "Google + Instagram + Facebook": [],
-    "Solo Google": [],
-    "Instagram": ["instagram.com"],
-    "Facebook": ["facebook.com"],
-    "Instagram + Facebook": ["instagram.com", "facebook.com"],
+PLATFORMS = {
+    "Google": None,
+    "Instagram": "instagram.com",
+    "Facebook": "facebook.com",
+    "LinkedIn": "linkedin.com",
+    "Indeed": "indeed.com",
 }
 
-# =========================================================
+# =========================
 # FUNCIONES
-# =========================================================
-def clean(text: str) -> str:
-    text = text or ""
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+# =========================
+def build_query(country_name: str, role_name: str, platform: str) -> str:
+    countries = COUNTRIES[country_name]
+    roles = ROLES[role_name]
+
+    roles_block = " OR ".join([f'"{r}"' for r in roles])
+    countries_block = " OR ".join([f'"{c}"' for c in countries])
+    remote_block = " OR ".join([f'"{r}"' for r in REMOTE_TERMS])
+    fast_block = " OR ".join([f'"{f}"' for f in FAST_TERMS])
+    exclude_block = " ".join(EXCLUDE_TERMS)
+
+    parts = [
+        f"({roles_block})",
+        f"({remote_block})",
+        f"({countries_block})",
+        f"({fast_block})",
+        exclude_block
+    ]
+
+    domain = PLATFORMS[platform]
+    if domain:
+        parts.append(f"site:{domain}")
+
+    # Última semana con operadores que ayudan en búsquedas
+    parts.append('"última semana" OR "last week" OR "7 días"')
+
+    return " ".join(parts)
 
 
-def get_domain(url: str) -> str:
-    try:
-        return urlparse(url).netloc.replace("www.", "")
-    except Exception:
-        return ""
+def google_search_url(query: str) -> str:
+    return f"https://www.google.com/search?q={quote_plus(query)}&hl=es"
 
 
-def contains_any(text: str, words: list[str]) -> bool:
-    text = text.lower()
-    return any(w.lower() in text for w in words)
+def whatsapp_url(text: str, phone: str = "") -> str:
+    base = "https://wa.me/"
+    return f"{base}{phone}?text={quote_plus(text)}"
 
 
-def looks_remote(text: str) -> bool:
-    return contains_any(text, REMOTE_TERMS)
-
-
-def looks_fast_apply(text: str) -> bool:
-    return contains_any(text, FAST_APPLY)
-
-
-def has_excluded(text: str) -> bool:
-    return contains_any(text, EXCLUDE)
-
-
-def looks_country(text: str, country_name: str) -> bool:
-    terms = COUNTRIES[country_name]["terms"]
-    return contains_any(text, terms)
-
-
-def score(text: str, country_name: str) -> int:
-    text = text.lower()
-    s = 0
-
-    for role in ROLES:
-        if role.lower() in text:
-            s += 14
-
-    for word in FAST_APPLY:
-        if word.lower() in text:
-            s += 16
-
-    for word in REMOTE_TERMS:
-        if word.lower() in text:
-            s += 18
-
-    if looks_country(text, country_name):
-        s += 14
-
-    if "sin experiencia" in text:
-        s += 24
-    if "entry level" in text:
-        s += 18
-    if "junior" in text:
-        s += 12
-    if "trainee" in text:
-        s += 12
-
-    return s
-
-
-def build_query(domains: list[str], country_name: str) -> str:
-    roles = " OR ".join([f'"{r}"' for r in ROLES])
-    fast = " OR ".join([f'"{f}"' for f in FAST_APPLY])
-
-    if country_name == "Todos en español":
-        country_block = '"Argentina" OR "España" OR "México" OR "Chile" OR "Colombia" OR "Perú" OR "Uruguay" OR "Paraguay" OR "LATAM"'
-    else:
-        country_block = f'"{country_name}"'
-
-    query = f"""
-    ({roles})
-    ("remoto" OR "remote" OR "work from home" OR "home office" OR "teletrabajo")
-    ({country_block})
-    ("español" OR "trabajo" OR "empleo" OR "postúlate" OR "postulate")
-    ({fast})
-    """
-
-    if domains:
-        sites = " OR ".join([f"site:{d}" for d in domains])
-        query += f" ({sites})"
-
-    for e in EXCLUDE:
-        query += f' -"{e}"'
-
-    return query
-
-
-def search_google(api_key: str, cx: str, query: str, limit: int, gl_value=None):
-    url = "https://customsearch.googleapis.com/customsearch/v1"
-    results = []
-    start = 1
-
-    while len(results) < limit:
-        batch = min(10, limit - len(results))
-
-        params = {
-            "key": api_key,
-            "cx": cx,
-            "q": query,
-            "num": batch,
-            "start": start,
-            "lr": LANGUAGE,
-            "dateRestrict": DATE_RESTRICT,
-            "safe": "active",
-        }
-        if gl_value:
-            params["gl"] = gl_value
-
-        response = requests.get(url, params=params, timeout=30)
-        response.raise_for_status()
-
-        data = response.json()
-        items = data.get("items", [])
-        if not items:
-            break
-
-        results.extend(items)
-        start += len(items)
-
-        if len(items) < batch:
-            break
-
-    return results
-
-
-def process_results(items: list[dict], country_name: str) -> list[dict]:
-    out = []
-    seen = set()
-
-    for item in items:
-        link = item.get("link", "")
-        if not link or link in seen:
-            continue
-        seen.add(link)
-
-        title = clean(item.get("title", "Sin título"))
-        snippet = clean(item.get("snippet", ""))
-        domain = get_domain(link)
-        full_text = f"{title} {snippet} {link}"
-
-        if has_excluded(full_text):
-            continue
-
-        if not looks_remote(full_text):
-            continue
-
-        # Para "Todos en español", no exigimos país exacto en todos los casos
-        if country_name != "Todos en español":
-            if not looks_country(full_text, country_name):
-                continue
-
-        sc = score(full_text, country_name)
-
-        # más flexible que antes
-        if sc < 28:
-            continue
-
-        easy = looks_fast_apply(full_text) or ("sin experiencia" in full_text.lower()) or ("entry level" in full_text.lower())
-
-        out.append({
-            "title": title,
-            "snippet": snippet,
-            "link": link,
-            "domain": domain,
-            "score": sc,
-            "easy": easy,
+def make_bundle(country_name: str, role_name: str):
+    rows = []
+    for platform in PLATFORMS.keys():
+        q = build_query(country_name, role_name, platform)
+        rows.append({
+            "plataforma": platform,
+            "query": q,
+            "url": google_search_url(q)
         })
-
-    out.sort(key=lambda x: (x["easy"], x["score"]), reverse=True)
-    return out
+    return rows
 
 
-def make_whatsapp_text(results: list[dict], country_name: str) -> str:
-    if not results:
-        return "No encontré empleos remotos esta semana."
+# =========================
+# UI
+# =========================
+st.title("💼 Empleos remotos en español")
+st.caption("Sin API. Genera búsquedas listas para encontrar empleos remotos, recientes y con postulación fácil.")
 
-    lines = [f"Empleos remotos encontrados para {country_name}:"]
-    for i, r in enumerate(results[:8], start=1):
-        lines.append(f"{i}. {r['title']} - {r['link']}")
-    return "\n".join(lines)
+col1, col2 = st.columns(2)
+with col1:
+    country = st.selectbox("País o región", list(COUNTRIES.keys()), index=0)
+with col2:
+    role = st.selectbox("Tipo de puesto", list(ROLES.keys()), index=5)
 
+st.write("La app no te pide palabras clave. Ya usa filtros fijos: remoto, sin experiencia, junior, países en español y última semana.")
 
-def whatsapp_link(phone: str, text: str) -> str:
-    phone = re.sub(r"\D", "", phone or "")
-    return f"https://wa.me/{phone}?text={quote(text)}"
+bundle = make_bundle(country, role)
 
+st.subheader("Buscar ahora")
 
-# =========================================================
-# INTERFAZ
-# =========================================================
-st.title("💼 Empleos Remotos en Español")
-st.caption("Remotos, recientes, sin experiencia o junior, con Google / Instagram / Facebook.")
+for item in bundle:
+    with st.container(border=True):
+        st.markdown(f"### {item['plataforma']}")
+        st.caption(item["query"])
+        st.link_button(f"Abrir búsqueda en {item['plataforma']}", item["url"])
 
-with st.sidebar:
-    st.subheader("Filtros")
-    country_name = st.selectbox("País", list(COUNTRIES.keys()), index=0)
-    source = st.selectbox("Fuente", list(SOURCES.keys()), index=0)
-    cantidad = st.slider("Cantidad de resultados", 10, 50, 30, 10)
+st.subheader("Abrir todas")
+cols = st.columns(len(bundle))
+for idx, item in enumerate(bundle):
+    with cols[idx]:
+        st.link_button(item["plataforma"], item["url"])
 
-    st.subheader("WhatsApp")
-    phone = st.text_input("Tu número con código país", placeholder="549....")
+# =========================
+# WHATSAPP
+# =========================
+st.subheader("Enviar a WhatsApp")
 
-if "favoritos" not in st.session_state:
-    st.session_state.favoritos = []
+phone = st.text_input(
+    "Número de WhatsApp en formato internacional, sin + ni espacios (opcional)",
+    placeholder="549..."
+)
 
-st.write("La app ya busca sola. No hace falta escribir nada.")
+summary_lines = [
+    f"Empleos remotos - {country} - {role}",
+    "",
+    "Búsquedas listas:"
+]
 
-if st.button("🔎 Buscar empleos", use_container_width=True):
-    if GOOGLE_API_KEY.startswith("PEGAR") or GOOGLE_CX.startswith("PEGAR"):
-        st.error("Primero tenés que pegar tu API key y tu CX arriba del archivo.")
-        st.stop()
+for item in bundle:
+    summary_lines.append(f"{item['plataforma']}: {item['url']}")
 
-    query = build_query(SOURCES[source], country_name)
-    gl_value = COUNTRIES[country_name]["gl"]
+summary_text = "\n".join(summary_lines)
 
-    with st.spinner("Buscando empleos remotos..."):
-        try:
-            items = search_google(GOOGLE_API_KEY, GOOGLE_CX, query, cantidad, gl_value)
-            results = process_results(items, country_name)
-            st.session_state["last_results"] = results
-            st.session_state["last_country"] = country_name
-        except requests.HTTPError as e:
-            st.error(f"Error de Google: {e}")
-            st.stop()
-        except Exception as e:
-            st.error(f"Error inesperado: {e}")
-            st.stop()
+if phone.strip():
+    st.link_button("Mandarme búsquedas por WhatsApp", whatsapp_url(summary_text, phone.strip()))
+else:
+    st.link_button("Abrir WhatsApp con mensaje", whatsapp_url(summary_text))
 
-    st.success(f"Encontré {len(results)} resultados útiles.")
+st.text_area("Mensaje que se enviará", summary_text, height=220)
 
-    if not results:
-        st.warning("Probá con 'Todos en español' o con 'Google + Instagram + Facebook', porque a veces una fuente sola trae muy poco.")
-    else:
-        easy_results = [r for r in results if r["easy"]]
-
-        if easy_results:
-            st.subheader("🟢 Más fáciles para entrar")
-            for r in easy_results[:8]:
-                st.markdown(f"- [{r['title']}]({r['link']})")
-        else:
-            st.subheader("🟡 Mejores resultados")
-            for r in results[:8]:
-                st.markdown(f"- [{r['title']}]({r['link']})")
-
-        st.divider()
-
-        st.subheader("Todos los resultados")
-        for r in results:
-            with st.container(border=True):
-                c1, c2 = st.columns([4, 1])
-
-                with c1:
-                    st.markdown(f"### [{r['title']}]({r['link']})")
-                    st.write(r["snippet"])
-                    st.caption(f"Fuente: {r['domain']}")
-                    st.link_button("🚀 Postularme", r["link"])
-
-                with c2:
-                    st.metric("Score", r["score"])
-                    if r["easy"]:
-                        st.caption("Fácil / rápida")
-                    if st.button("⭐ Guardar", key=f"fav_{r['link']}"):
-                        st.session_state.favoritos.append(r)
-
-if st.session_state.get("last_results"):
-    st.divider()
-    st.subheader("📲 Enviar resumen a WhatsApp")
-
-    text = make_whatsapp_text(
-        st.session_state["last_results"],
-        st.session_state.get("last_country", "tu búsqueda")
-    )
-
-    st.text_area("Mensaje que se enviará", value=text, height=180)
-
-    if phone:
-        st.link_button("Enviar a WhatsApp", whatsapp_link(phone, text))
-    else:
-        st.info("Poné tu número en la barra lateral para abrir WhatsApp con el mensaje listo.")
-
-if st.session_state.favoritos:
-    st.divider()
-    st.subheader("⭐ Guardados")
-    vistos = set()
-    for f in st.session_state.favoritos:
-        if f["link"] in vistos:
-            continue
-        vistos.add(f["link"])
-        st.markdown(f"- [{f['title']}]({f['link']})")
+st.info(
+    "Esta versión no depende de API. Genera búsquedas listas y un mensaje de WhatsApp para no trabarte con bloqueos."
+)
