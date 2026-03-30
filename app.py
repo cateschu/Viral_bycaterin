@@ -1,430 +1,210 @@
 import os
 import re
+import requests
+import streamlit as st
 from datetime import datetime
 from urllib.parse import urlparse
 
-import requests
-import streamlit as st
+st.set_page_config(page_title="Empleos Remotos AR", page_icon="💼", layout="wide")
 
-st.set_page_config(
-    page_title="Empleos remotos recientes",
-    page_icon="💼",
-    layout="wide"
-)
+# ================= CONFIG =================
+GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
+GOOGLE_CX = st.secrets.get("GOOGLE_CX", "")
 
-# =========================
-# CONFIG
-# =========================
-GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY", ""))
-GOOGLE_CX = st.secrets.get("GOOGLE_CX", os.getenv("GOOGLE_CX", ""))
+DATE_RESTRICT = "d3"
+LANGUAGE = "lang_es"
+COUNTRY = "ar"
 
-ROLE_KEYWORDS = [
-    "virtual assistant",
-    "asistente virtual",
-    "administrative assistant",
-    "administrativo",
-    "admin assistant",
-    "data entry",
-    "customer support",
-    "chat support",
-    "back office",
-    "email support",
-    "office assistant",
-    "customer service",
+# ================= DATA =================
+ROLES = [
+    "asistente virtual", "administrativo remoto", "data entry",
+    "customer support", "chat support", "email support",
+    "back office", "atención al cliente remoto"
 ]
 
-EXCLUDE_TERMS = [
-    "senior",
-    "sr",
-    "manager",
-    "director",
-    "engineer",
-    "developer",
-    "programador",
-    "sales",
-    "call center presencial",
-    "onsite",
-    "on site",
-    "híbrido",
-    "hybrid",
-    "presencial",
-    "5 years",
-    "3 years",
-    "experiencia mínima 3 años",
+FAST_APPLY = [
+    "postúlate", "postulate", "apply now", "easy apply",
+    "quick apply", "sin experiencia", "entry level", "junior"
 ]
 
-PLATFORM_SITES = {
-    "Google": [],
-    "Facebook": ["facebook.com"],
+EXCLUDE = [
+    "presencial", "híbrido", "hybrid", "onsite",
+    "senior", "manager", "director", "developer", "engineer"
+]
+
+SOURCES = {
+    "Todas": [],
     "Instagram": ["instagram.com"],
-    "Facebook + Instagram": ["facebook.com", "instagram.com"],
-    "Todas": ["facebook.com", "instagram.com"],
+    "Facebook": ["facebook.com"],
+    "Instagram + Facebook": ["instagram.com", "facebook.com"]
 }
 
-COUNTRY_OPTIONS = {
-    "Argentina": {"gl": "ar", "label": "Argentina"},
-    "España": {"gl": "es", "label": "España"},
-    "México": {"gl": "mx", "label": "México"},
-    "Chile": {"gl": "cl", "label": "Chile"},
-    "Colombia": {"gl": "co", "label": "Colombia"},
-    "Perú": {"gl": "pe", "label": "Perú"},
-    "Uruguay": {"gl": "uy", "label": "Uruguay"},
-    "Paraguay": {"gl": "py", "label": "Paraguay"},
-    "Solo países en español": {"gl": None, "label": "países en español"},
-}
+# ================= HELPERS =================
+def clean(text):
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text or "")).strip()
 
-LANGUAGE_MODES = {
-    "Español": "lang_es",
-    "Español + inglés": None,
-}
+def domain(url):
+    return urlparse(url).netloc.replace("www.", "")
 
-DATE_RESTRICT = "d3"  # últimos 3 días ≈ 72 horas
-
-
-# =========================
-# HELPERS
-# =========================
-def clean_text(text: str) -> str:
-    if not text:
-        return ""
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
-def domain_from_url(url: str) -> str:
-    try:
-        return urlparse(url).netloc.replace("www.", "")
-    except Exception:
-        return ""
-
-
-def looks_remote(text: str) -> bool:
-    remote_signals = [
-        "remote", "remoto", "work from home", "home office",
-        "100% remote", "fully remote", "teletrabajo"
-    ]
+def contains(text, words):
     text = text.lower()
-    return any(term in text for term in remote_signals)
+    return any(w.lower() in text for w in words)
 
+def is_valid(text):
+    return (
+        contains(text, ["remoto", "remote"])
+        and contains(text, ["argentina"])
+        and not contains(text, EXCLUDE)
+    )
 
-def looks_spanish_region(text: str, selected_country: str) -> bool:
+def score(text):
     text = text.lower()
+    s = 0
 
-    if selected_country == "Solo países en español":
-        spanish_markers = [
-            "argentina", "españa", "méxico", "mexico", "chile", "colombia",
-            "perú", "peru", "uruguay", "paraguay", "latam", "américa latina",
-            "latin america", "hispano", "español", "spanish"
-        ]
-        return any(marker in text for marker in spanish_markers)
+    for r in ROLES:
+        if r in text: s += 15
 
-    return COUNTRY_OPTIONS[selected_country]["label"].lower() in text or selected_country.lower() in text.lower()
+    for f in FAST_APPLY:
+        if f in text: s += 20
 
+    if "sin experiencia" in text: s += 25
+    if "remoto" in text: s += 20
+    if "argentina" in text: s += 15
 
-def build_query(include_terms, exclude_terms, domains, selected_country, language_mode):
-    parts = []
+    return s
 
-    roles_block = " OR ".join([f'"{term}"' for term in include_terms])
-    parts.append(f"({roles_block})")
+def build_query(domains):
+    roles = " OR ".join([f'"{r}"' for r in ROLES])
+    fast = " OR ".join([f'"{f}"' for f in FAST_APPLY])
 
-    # Solo remoto
-    parts.append('("remote" OR "remoto" OR "work from home" OR "home office" OR "teletrabajo" OR "fully remote" OR "100% remote")')
+    q = f"""
+    ({roles})
+    ("remoto" OR "remote" OR "work from home")
+    ("Argentina")
+    ({fast})
+    """
 
-    # Sin experiencia / junior / entrada
-    parts.append('("entry level" OR "junior" OR "no experience" OR "sin experiencia" OR "training provided" OR "trainee")')
-
-    # Ubicación
-    if selected_country == "Solo países en español":
-        parts.append('("Argentina" OR "España" OR "México" OR "Chile" OR "Colombia" OR "Perú" OR "Uruguay" OR "Paraguay" OR "LATAM" OR "América Latina")')
-    else:
-        parts.append(f'"{COUNTRY_OPTIONS[selected_country]["label"]}"')
-
-    # Sitios
     if domains:
-        site_block = " OR ".join([f"site:{d}" for d in domains])
-        parts.append(f"({site_block})")
+        sites = " OR ".join([f"site:{d}" for d in domains])
+        q += f" ({sites})"
 
-    # Exclusiones
-    for term in exclude_terms:
-        parts.append(f'-"{term}"')
+    for e in EXCLUDE:
+        q += f' -"{e}"'
 
-    return " ".join(parts)
+    return q
 
-
-def google_custom_search(query, api_key, cx, num=10, start=1, gl=None, lr=None, date_restrict=None):
+def search(query, limit):
     url = "https://customsearch.googleapis.com/customsearch/v1"
-    params = {
-        "key": api_key,
-        "cx": cx,
-        "q": query,
-        "num": num,
-        "start": start,
-        "safe": "active",
-    }
+    results = []
+    start = 1
 
-    if gl:
-        params["gl"] = gl
-    if lr:
-        params["lr"] = lr
-    if date_restrict:
-        params["dateRestrict"] = date_restrict
+    while len(results) < limit:
+        res = requests.get(url, params={
+            "key": GOOGLE_API_KEY,
+            "cx": GOOGLE_CX,
+            "q": query,
+            "num": 10,
+            "start": start,
+            "gl": COUNTRY,
+            "lr": LANGUAGE,
+            "dateRestrict": DATE_RESTRICT
+        })
 
-    response = requests.get(url, params=params, timeout=30)
-    response.raise_for_status()
-    return response.json()
+        data = res.json()
+        items = data.get("items", [])
+        if not items: break
 
+        results += items
+        start += 10
 
-def score_result(item, selected_country):
-    title = clean_text(item.get("title", ""))
-    snippet = clean_text(item.get("snippet", ""))
-    link = item.get("link", "")
-    text = f"{title} {snippet} {link}".lower()
+    return results[:limit]
 
-    score = 0
-
-    positive_terms = {
-        "remote": 16,
-        "remoto": 16,
-        "work from home": 16,
-        "home office": 16,
-        "teletrabajo": 16,
-        "virtual assistant": 14,
-        "asistente virtual": 14,
-        "administrative assistant": 12,
-        "administrativo": 12,
-        "data entry": 14,
-        "customer support": 12,
-        "chat support": 12,
-        "back office": 10,
-        "entry level": 8,
-        "junior": 8,
-        "sin experiencia": 10,
-        "no experience": 10,
-        "training provided": 8,
-        "trainee": 6,
-    }
-
-    negative_terms = {
-        "senior": -20,
-        "manager": -20,
-        "director": -20,
-        "developer": -18,
-        "engineer": -18,
-        "presencial": -25,
-        "onsite": -25,
-        "on site": -25,
-        "hybrid": -15,
-        "híbrido": -15,
-    }
-
-    for term, pts in positive_terms.items():
-        if term in text:
-            score += pts
-
-    for term, pts in negative_terms.items():
-        if term in text:
-            score += pts
-
-    if looks_remote(text):
-        score += 20
-
-    if looks_spanish_region(text, selected_country):
-        score += 12
-
-    return max(score, 0)
-
-
-def normalize_results(items, selected_country):
-    cleaned = []
+def process(items):
+    out = []
     seen = set()
 
-    for item in items:
-        link = item.get("link", "")
-        if not link or link in seen:
-            continue
+    for i in items:
+        link = i.get("link")
+        if not link or link in seen: continue
         seen.add(link)
 
-        title = clean_text(item.get("title", "Sin título"))
-        snippet = clean_text(item.get("snippet", ""))
-        text = f"{title} {snippet} {link}"
+        title = clean(i.get("title"))
+        snippet = clean(i.get("snippet"))
+        text = f"{title} {snippet}"
 
-        # Filtro extra fuerte: solo remoto
-        if not looks_remote(text):
-            continue
+        if not is_valid(text): continue
 
-        # Filtro región
-        if not looks_spanish_region(text, selected_country):
-            continue
+        sc = score(text)
 
-        cleaned.append({
+        if sc < 40: continue
+
+        out.append({
             "title": title,
             "snippet": snippet,
             "link": link,
-            "domain": domain_from_url(link),
-            "score": score_result(item, selected_country),
+            "domain": domain(link),
+            "score": sc
         })
 
-    cleaned.sort(key=lambda x: x["score"], reverse=True)
-    return cleaned
+    return sorted(out, key=lambda x: x["score"], reverse=True)
 
-
-def export_markdown(results):
-    lines = ["# Empleos remotos recientes\n"]
-    for i, result in enumerate(results, start=1):
-        lines.append(f"## {i}. {result['title']}")
-        lines.append(f"- Puntaje IA: {result['score']}")
-        lines.append(f"- Plataforma: {result['domain']}")
-        lines.append(f"- Link: {result['link']}")
-        lines.append(f"- Resumen: {result['snippet']}\n")
-    return "\n".join(lines)
-
-
-# =========================
-# UI
-# =========================
-st.title("💼 Empleos remotos recientes")
-st.caption("Buscador de empleos remotos de hasta 72 horas para Argentina o países en español.")
+# ================= UI =================
+st.title("💼 Empleos Remotos Argentina PRO")
 
 with st.sidebar:
-    st.header("Filtros")
+    source = st.selectbox("Fuente", list(SOURCES.keys()))
+    cantidad = st.slider("Cantidad", 10, 40, 20)
 
-    selected_country = st.selectbox(
-        "País o región",
-        list(COUNTRY_OPTIONS.keys()),
-        index=0
-    )
+if "favoritos" not in st.session_state:
+    st.session_state.favoritos = []
 
-    platform = st.selectbox(
-        "Fuente",
-        list(PLATFORM_SITES.keys()),
-        index=0
-    )
+if st.button("🔎 Buscar empleos", use_container_width=True):
 
-    language_mode = st.selectbox(
-        "Idioma",
-        list(LANGUAGE_MODES.keys()),
-        index=0
-    )
-
-    max_results = st.slider(
-        "Cantidad de resultados",
-        min_value=10,
-        max_value=50,
-        value=20,
-        step=10
-    )
-
-st.subheader("Puestos buscados")
-
-custom_roles = st.text_area(
-    "Palabras clave",
-    value=", ".join(ROLE_KEYWORDS),
-    height=120
-)
-
-search_now = st.button("🔎 Buscar ahora", use_container_width=True)
-
-if search_now:
     if not GOOGLE_API_KEY or not GOOGLE_CX:
-        st.error("Faltan GOOGLE_API_KEY y GOOGLE_CX en Secrets.")
+        st.error("Faltan API KEY")
         st.stop()
 
-    include_terms = [
-        item.strip()
-        for raw in custom_roles.splitlines()
-        for item in raw.split(",")
-        if item.strip()
-    ]
+    query = build_query(SOURCES[source])
 
-    query = build_query(
-        include_terms=include_terms,
-        exclude_terms=EXCLUDE_TERMS,
-        domains=PLATFORM_SITES[platform],
-        selected_country=selected_country,
-        language_mode=language_mode
-    )
+    st.info("Buscando empleos remotos recientes (últimas 72hs)...")
 
-    gl_value = COUNTRY_OPTIONS[selected_country]["gl"]
-    lr_value = LANGUAGE_MODES[language_mode]
+    items = search(query, cantidad)
+    results = process(items)
 
-    st.info(f"Consulta usada:\n\n`{query}`")
-    st.caption("Reciente: últimos 3 días (≈ 72 horas)")
-
-    all_items = []
-    fetched = 0
-    start = 1
-
-    try:
-        while fetched < max_results:
-            batch = min(10, max_results - fetched)
-
-            data = google_custom_search(
-                query=query,
-                api_key=GOOGLE_API_KEY,
-                cx=GOOGLE_CX,
-                num=batch,
-                start=start,
-                gl=gl_value,
-                lr=lr_value,
-                date_restrict=DATE_RESTRICT
-            )
-
-            items = data.get("items", [])
-            if not items:
-                break
-
-            all_items.extend(items)
-            fetched += len(items)
-            start += len(items)
-
-            if len(items) < batch:
-                break
-
-    except requests.HTTPError as exc:
-        st.error(f"Error HTTP al consultar Google: {exc}")
-        st.stop()
-    except Exception as exc:
-        st.error(f"Error inesperado: {exc}")
-        st.stop()
-
-    results = normalize_results(all_items, selected_country)
-
-    st.success(f"Resultados útiles encontrados: {len(results)}")
+    st.success(f"{len(results)} encontrados")
 
     if not results:
-        st.warning("No encontré resultados que cumplan remoto + español/Argentina + últimos 3 días.")
+        st.warning("No hay resultados buenos ahora mismo")
     else:
-        left, right = st.columns([3, 1])
 
-        with right:
-            st.download_button(
-                "⬇️ Descargar resultados",
-                data=export_markdown(results),
-                file_name=f"empleos_remotos_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
-                mime="text/markdown",
-                use_container_width=True
-            )
+        # TOP FACILES
+        st.subheader("🟢 Más fáciles para entrar")
+        for r in results[:5]:
+            st.markdown(f"- [{r['title']}]({r['link']})")
 
-        with left:
-            st.subheader("Resultados")
+        st.divider()
 
-        for idx, result in enumerate(results, start=1):
+        # TODOS
+        for r in results:
             with st.container(border=True):
-                c1, c2 = st.columns([5, 1])
+                c1, c2 = st.columns([4,1])
+
                 with c1:
-                    st.markdown(f"### {idx}. [{result['title']}]({result['link']})")
-                    st.write(result["snippet"])
-                    st.caption(f"Plataforma: {result['domain']}")
+                    st.markdown(f"### {r['title']}")
+                    st.write(r["snippet"])
+                    st.caption(r["domain"])
+
+                    st.link_button("🚀 Postularme", r["link"])
+                    st.code(r["link"])
+
                 with c2:
-                    st.metric("Score", result["score"])
+                    st.metric("Score", r["score"])
 
-        st.subheader("Top 5")
-        for item in results[:5]:
-            st.markdown(f"- [{item['title']}]({item['link']}) — **{item['score']} pts**")
+                    if st.button("⭐ Guardar", key=r["link"]):
+                        st.session_state.favoritos.append(r)
 
-with st.expander("Secrets para Streamlit"):
-    st.code(
-        'GOOGLE_API_KEY = "tu_api_key"\nGOOGLE_CX = "tu_search_engine_id"',
-        language="toml"
-    )
+# FAVORITOS
+if st.session_state.favoritos:
+    st.subheader("⭐ Guardados")
+    for f in st.session_state.favoritos:
+        st.markdown(f"- [{f['title']}]({f['link']})")
