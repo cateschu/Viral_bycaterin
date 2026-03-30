@@ -8,9 +8,8 @@ from urllib.parse import urlparse
 st.set_page_config(page_title="Empleos Remotos AR", page_icon="💼", layout="wide")
 
 # ================= CONFIG =================
-GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
-GOOGLE_CX = st.secrets.get("GOOGLE_CX", "")
-
+GOOGLE_API_KEY = "AIzaSyDswZxrBOdaz6jZnByoEjwOcvzU7hJ6bQw"
+GOOGLE_CX = "d48625c20c6824976"
 DATE_RESTRICT = "d3"
 LANGUAGE = "lang_es"
 COUNTRY = "ar"
